@@ -50,14 +50,16 @@ int subscriber_loop(int id, char* server, int num_msgs, int msg_size) {
 quit:
 	auto end = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> diff = end - start;
-	double data_transfer = (msg_rcvd - 1) * msg_size / double(1024) / double(1024) / diff.count();
+	double data_transfer = (double(msg_rcvd) - 1.0) * double(msg_size + sizeof(RTMA_MSG_HEADER)) / double(1024) / double(1024) / diff.count();
 
 	mod.DisconnectFromMMM();
 
-	printf("Subscriber[%d] -> %d messages/sec | %0.1lf MB/sec\n",
+	printf("Subscriber[%d] -> %d messages | %d messages/sec | %0.1lf MB/sec | %0.6lf sec\n",
 		id,
-		int(double(msg_rcvd - 1)/diff.count()),
-		data_transfer);
+		msg_rcvd,
+		int((double(msg_rcvd) - 1.0)/diff.count()),
+		data_transfer,
+		diff.count());
 
 	return 0;
 }
@@ -85,14 +87,16 @@ int publisher_loop(int id, char* server, int num_msgs, int msg_size, int num_sub
 		}
 	}
 
-	MDF_TEST_MSG *msg = (MDF_TEST_MSG *)malloc(sizeof(MDF_TEST_MSG) + msg_size * sizeof(char));
+	size_t packet_size = msg_size * sizeof(char);
+	MDF_TEST_MSG *msg = (MDF_TEST_MSG *)malloc(packet_size);
 
+	// Add some dummy data to send
 	for (int i = 0; i < msg_size; i++) {
 		msg->data[i] = i % 128;
 	}
 
 	CMessage M(MT_TEST_MSG);
-	M.SetData(msg, sizeof(msg));
+	M.SetData(msg, packet_size);
 
 	auto start = std::chrono::high_resolution_clock::now();
 
@@ -103,15 +107,16 @@ int publisher_loop(int id, char* server, int num_msgs, int msg_size, int num_sub
 	
 	auto end = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> diff = end - start;
-	double data_transfer = num_msgs * msg_size / double(1024) / double(1024) / diff.count();
+	double data_transfer = double(num_msgs) * double(msg_size + sizeof(RTMA_MSG_HEADER)) / double(1024) / double(1024) / diff.count();
 
 	mod.DisconnectFromMMM();
 
-	printf("Publisher[%d] -> %d | %d messages/sec | %0.1lf MB/sec\n",
+	printf("Publisher[%d] -> %d messages | %d messages/sec | %0.1lf MB/sec | %0.6lf sec\n",
 		id,
 		num_msgs,
 		int(double(num_msgs) / diff.count()),
-		data_transfer);
+		data_transfer,
+		diff.count());
 
 	return 0;
 }
@@ -184,6 +189,9 @@ int main(int argc, char** argv) {
 
 	printf("Waiting for subscriber threads...\n");
 
+	printf("Starting Test...\n");
+
+	printf("Total RTMA Packet Size: %d bytes\n", sizeof(RTMA_MSG_HEADER) + msg_size);
 	for (auto& publisher : publishers)
 		publisher.join();
 
