@@ -34,14 +34,16 @@ int subscriber_loop(int id, char* server, int num_msgs, int msg_size) {
 		CMessage M;
 		int status = mod.ReadMessage(&M, -1);
 
-		switch (M.msg_type) {
-		case MT_TEST_MSG:
-			if (msg_rcvd == 0)
-				start = std::chrono::high_resolution_clock::now();
-			msg_rcvd++;
-			break;
-		case MT_EXIT:
-			goto quit;
+		if (status) {
+			switch (M.msg_type) {
+			case MT_TEST_MSG:
+				if (msg_rcvd == 0)
+					start = std::chrono::high_resolution_clock::now();
+				msg_rcvd++;
+				break;
+			case MT_EXIT:
+				goto quit;
+			}
 		}
 	}
 
@@ -74,10 +76,12 @@ int publisher_loop(int id, char* server, int num_msgs, int msg_size, int num_sub
 		CMessage M;
 		int status = mod.ReadMessage(&M, -1);
 
-		switch (M.msg_type) {
-		case MT_SUBSCRIBER_READY:
-			subscribers_ready++;
-			break;
+		if (status) {
+			switch (M.msg_type) {
+			case MT_SUBSCRIBER_READY:
+				subscribers_ready++;
+				break;
+			}
 		}
 	}
 
