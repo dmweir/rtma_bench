@@ -4,7 +4,7 @@ CXX := g++
 LIBS=-lRTMA
 
 ifeq ($(UNAME), Linux)
-COMMON=-O2 -I$(RTMA)/include -DUSE_LINUX -std=c++11 -pthread -Wl
+COMMON=-O2 -I$(RTMA)/include -DUSE_LINUX -std=c++11 -pthread
 LIBEXT=.so
 endif
 
