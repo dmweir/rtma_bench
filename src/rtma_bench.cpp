@@ -1,4 +1,4 @@
-#include "rtma.h"
+#include "RTMA.h"
 
 #include <vector>
 #include <thread>
