@@ -49,17 +49,17 @@ int subscriber_loop(int id, char* server, int num_msgs, int msg_size) {
 
 quit:
 	auto end = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double> diff = end - start;
-	double data_transfer = (double(msg_rcvd) - 1.0) * double(msg_size + sizeof(RTMA_MSG_HEADER)) / double(1024) / double(1024) / diff.count();
+	std::chrono::duration<double> dur = end - start;
+	double data_transfer = (double(msg_rcvd) - 1.0) * double(msg_size + sizeof(RTMA_MSG_HEADER)) / double(1024) / double(1024) / dur.count();
 
 	mod.DisconnectFromMMM();
 
 	printf("Subscriber[%d] -> %d messages | %d messages/sec | %0.1lf MB/sec | %0.6lf sec\n",
 		id,
 		msg_rcvd,
-		int((double(msg_rcvd) - 1.0)/diff.count()),
+		int((double(msg_rcvd) - 1.0)/dur.count()),
 		data_transfer,
-		diff.count());
+		dur.count());
 
 	return 0;
 }
@@ -106,17 +106,17 @@ int publisher_loop(int id, char* server, int num_msgs, int msg_size, int num_sub
 	}
 	
 	auto end = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double> diff = end - start;
-	double data_transfer = double(num_msgs) * double(msg_size + sizeof(RTMA_MSG_HEADER)) / double(1024) / double(1024) / diff.count();
+	std::chrono::duration<double> dur = end - start;
+	double data_transfer = double(num_msgs) * double(msg_size + sizeof(RTMA_MSG_HEADER)) / double(1024) / double(1024) / dur.count();
 
 	mod.DisconnectFromMMM();
 
 	printf("Publisher[%d] -> %d messages | %d messages/sec | %0.1lf MB/sec | %0.6lf sec\n",
 		id,
 		num_msgs,
-		int(double(num_msgs) / diff.count()),
+		int(double(num_msgs) / dur.count()),
 		data_transfer,
-		diff.count());
+		dur.count());
 
 	return 0;
 }
