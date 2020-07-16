@@ -74,8 +74,9 @@ def publisher_loop(pub_id=0, num_msgs=10000, msg_size=512, num_subscribers=1, re
 
     # Stats
     test_msg_size = HEADER_SIZE + ctypes.sizeof(data)
-    data_rate = test_msg_size * num_msgs / float(1048576) / (toc-tic)
-    print(f"Publisher[{pub_id}] -> {num_msgs} messages | {int((num_msgs)/toc-tic)} messages/sec | {data_rate:0.1f} MB/sec | {toc-tic:0.6f} sec ")
+    dur = (toc-tic)
+    data_rate = test_msg_size * num_msgs / float(1048576) / dur
+    print(f"Publisher[{pub_id}] -> {num_msgs} messages | {int((num_msgs)/dur)} messages/sec | {data_rate:0.1f} MB/sec | {dur:0.6f} sec ")
 
     mod.DisconnectFromMMM()
 
@@ -114,11 +115,12 @@ def subscriber_loop(sub_id, num_msgs, msg_size=512, server='127.0.0.1:7111'):
     # Stats
     msg_data = create_test_msg(msg_size)()
     test_msg_size = HEADER_SIZE + ctypes.sizeof(msg_data)
-    data_rate = (test_msg_size * num_msgs) / float(1048576) / (toc-tic)
+    dur = toc - tic
+    data_rate = (test_msg_size * num_msgs) / float(1048576) / dur
     if msg_count == num_msgs:
-        print(f"Subscriber [{sub_id:d}] -> {msg_count} messages | {int((msg_count-1)/toc-tic)} messages/sec | {data_rate:0.1f} MB/sec | {toc-tic:0.6f} sec ")
+        print(f"Subscriber [{sub_id:d}] -> {msg_count} messages | {int((msg_count-1)/dur)} messages/sec | {data_rate:0.1f} MB/sec | {dur:0.6f} sec ")
     else:
-        print(f"Subscriber [{sub_id:d}] -> {msg_count} ({int(msg_count/num_msgs *100):0d}%) messages | {int((msg_count-1)/toc-tic)} messages/sec | {data_rate:0.1f} MB/sec | {toc-tic:0.6f} sec ")
+        print(f"Subscriber [{sub_id:d}] -> {msg_count} ({int(msg_count/num_msgs *100):0d}%) messages | {int((msg_count-1)/dur)} messages/sec | {data_rate:0.1f} MB/sec | {dur:0.6f} sec ")
 
     mod.DisconnectFromMMM()
 
