@@ -14,12 +14,6 @@
 #define MT_SUBSCRIBER_READY 5679
 #define MT_SUBSCRIBER_DONE 5680
 
-
-typedef struct {
-	char data[];
-}MDF_TEST_MSG;
-
-
 int subscriber_loop(int id, char* server, int num_msgs, int msg_size) {
 	RTMA_Module mod;
 
@@ -52,11 +46,11 @@ int subscriber_loop(int id, char* server, int num_msgs, int msg_size) {
 			}
 		}
 	}
-	mod.SendSignal(MT_SUBSCRIBER_DONE);
-
+	
 quit:
+	mod.SendSignal(MT_SUBSCRIBER_DONE);
 	std::chrono::duration<double> dur = end - start;
-	double data_transfer = (double(msg_rcvd) - 1.0) * double(msg_size + sizeof(RTMA_MSG_HEADER)) / double(1024) / double(1024) / dur.count();
+	double data_transfer = (double(msg_rcvd) - 1.0) * double(msg_size + sizeof(RTMA_MSG_HEADER)) / double(1e6) / dur.count();
 
 	mod.DisconnectFromMMM();
 
@@ -101,17 +95,16 @@ int publisher_loop(int id, char* server, int num_msgs, int msg_size, int num_sub
 			switch (M.msg_type) {
 			case MT_SUBSCRIBER_READY:
 				subscribers_ready++;
-				break;
+				continue;
 			}
 		}
 	}
 
 	size_t packet_size = msg_size * sizeof(char);
-	MDF_TEST_MSG *msg = (MDF_TEST_MSG *)malloc(packet_size);
-
+	char* msg = (char*)malloc(packet_size);
 	// Add some dummy data to send
 	for (int i = 0; i < msg_size; i++) {
-		msg->data[i] = i % 128;
+		msg[i] = i % 128;
 	}
 
 	CMessage M(MT_TEST_MSG);
@@ -120,15 +113,17 @@ int publisher_loop(int id, char* server, int num_msgs, int msg_size, int num_sub
 	auto start = std::chrono::high_resolution_clock::now();
 
 	for (int i = 0; i < num_msgs; i++) {
-
 		int status = mod.SendMessageRTMA(&M, (MODULE_ID)0 ,(HOST_ID)0);
 	}
+	
+	auto end = std::chrono::high_resolution_clock::now();
 
+	// We need to sleep here because the main thread misses this signal in certain cases.
+	std::this_thread::sleep_for(std::chrono::duration<double>(.5));
 	mod.SendSignal(MT_PUBLISHER_DONE);
 
-	auto end = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> dur = end - start;
-	double data_transfer = double(num_msgs) * double(msg_size + sizeof(RTMA_MSG_HEADER)) / double(1024) / double(1024) / dur.count();
+	double data_transfer = double(num_msgs) * double(msg_size + sizeof(RTMA_MSG_HEADER)) / double(1e6) / dur.count();
 
 	mod.DisconnectFromMMM();
 
@@ -208,10 +203,14 @@ int main(int argc, char** argv) {
 	std::vector<std::thread> publishers;
 	std::vector<std::thread> subscribers;
 
-	printf("Initializing publisher threads...\n");
+	printf("Packet Size: %d bytes\n", msg_size);
+	printf("Sending %d messsage...\n", num_msgs);
 
-	for (int i = 0; i < num_publishers; i++)
+	//printf("Initializing publisher threads...\n");
+
+	for (int i = 0; i < num_publishers; i++) {
 		publishers.push_back(std::thread(publisher_loop, i + 1, server, num_msgs / num_publishers, msg_size, num_subscribers));
+	}
 
 	// Wait for publisher threads to be established
 	int publishers_ready = 0;
@@ -222,38 +221,37 @@ int main(int argc, char** argv) {
 			switch (M.msg_type) {
 			case MT_PUBLISHER_READY:
 				publishers_ready++;
-				break;
+				continue;
 			}
 		}
 	}
 
-	printf("Waiting for subscriber threads...\n");
-	for (int i = 0; i < num_subscribers; i++)
+	//printf("Waiting for subscriber threads...\n");
+	for (int i = 0; i < num_subscribers; i++) {
 		subscribers.push_back(std::thread(subscriber_loop, i + 1, server, num_msgs, msg_size));
-
-	printf("Starting Test...\n");
-
-	printf("Total RTMA Packet Size: %d bytes\n", sizeof(RTMA_MSG_HEADER) + msg_size);
-
+	}
+	//printf("Starting Test...\n");
 
 	//Wait for subscribers to finish
-	double abort_timeout = max(num_msgs / 10000.0, 10.0);
+	double abort_timeout = 30; //seconds
 	auto abort_start = std::chrono::high_resolution_clock::now();
 
 	int subscribers_done = 0;
 	int publishers_done = 0;
-
-	while ( (subscribers_done < num_subscribers) && (publishers_done < num_publishers) ) {
-		CMessage M;
+	CMessage M;
+	while ( (subscribers_done < num_subscribers) || (publishers_done < num_publishers) ) {
+		
 		int status = mod.ReadMessage(&M, 0.100);
 		if (status) {
 			switch (M.msg_type) {
-			case MT_SUBSCRIBER_DONE:
-				subscribers_done++;
-				break;
 			case MT_PUBLISHER_DONE:
 				publishers_done++;
-				break;
+				continue;
+			case MT_SUBSCRIBER_DONE:
+				subscribers_done++;
+				continue;
+			default:
+				continue;
 			}
 		}
 
@@ -263,7 +261,6 @@ int main(int argc, char** argv) {
 		if (dur.count() > abort_timeout) {
 			printf("Test Timeout! Sending Exit Signal...\n");
 			mod.SendSignal(MT_EXIT);
-			break;
 		}
 	}
 
@@ -273,6 +270,6 @@ int main(int argc, char** argv) {
 	for (auto& subscriber : subscribers)
 		subscriber.join();
 
-	printf("Done!\n");
+	//printf("Done!\n");
 	return 0;
 }
