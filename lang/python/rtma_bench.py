@@ -8,7 +8,10 @@ from PyRTMA3 import copy_from_msg, copy_to_msg
 import ctypes
 
 MT_TEST_MSG = 1234
-MT_SUBSCRIBER_READY = 5678
+MT_PUBLISHER_READY = 5677
+MT_PUBLISHER_DONE = 5678
+MT_SUBSCRIBER_READY = 5679
+MT_SUBSCRIBER_DONE = 5680
 
 # Note: this should match the header defined in RTMA.h
 MODULE_ID = ctypes.c_short
@@ -38,17 +41,15 @@ def create_test_msg(msg_size):
         _fields_ = [('data', ctypes.c_byte * msg_size)]
     return TEST
 
-#sys.path.append('../')
-
-def publisher_loop(pub_id=0, num_msgs=10000, msg_size=512, num_subscribers=1, ready_flag=None, server='127.0.0.1:7111'):
+def publisher_loop(pub_id=0, num_msgs=10000, msg_size=128, num_subscribers=1, server='127.0.0.1:7111'):
     # Setup Client
     mod = PyRTMA.RTMA_Module(0, 0)
     mod.ConnectToMMM(server)
+    mod.SendModuleReady()
     mod.Subscribe(MT_SUBSCRIBER_READY)
 
     # Signal that publisher is ready
-    if ready_flag is not None:
-        ready_flag.set()
+    mod.SendSignal(MT_PUBLISHER_READY)
 
     # Wait for the subscribers to be ready
     num_subscribers_ready = 0
@@ -72,26 +73,26 @@ def publisher_loop(pub_id=0, num_msgs=10000, msg_size=512, num_subscribers=1, re
         mod.SendMessage(msg)
     toc = time.perf_counter()
 
+    mod.SendSignal(MT_PUBLISHER_DONE)
+
     # Stats
     test_msg_size = HEADER_SIZE + ctypes.sizeof(data)
-    dur = (toc-tic)
-    data_rate = test_msg_size * num_msgs / float(1048576) / dur
+    dur = toc-tic
+    data_rate = test_msg_size * num_msgs / 1e6 / dur
     print(f"Publisher[{pub_id}] -> {num_msgs} messages | {int((num_msgs)/dur)} messages/sec | {data_rate:0.1f} MB/sec | {dur:0.6f} sec ")
 
     mod.DisconnectFromMMM()
 
-def subscriber_loop(sub_id, num_msgs, msg_size=512, server='127.0.0.1:7111'):
+def subscriber_loop(sub_id, num_msgs, msg_size=128, server='127.0.0.1:7111'):
     # Setup Client
     mod = PyRTMA.RTMA_Module(0, 0)
     mod.ConnectToMMM(server)
+    mod.SendModuleReady()
     mod.Subscribe(MT_TEST_MSG)
     mod.Subscribe(PyRTMA.MT_EXIT)
     mod.SendSignal(MT_SUBSCRIBER_READY)
 
     # Read Loop (Start clock after first TEST msg received)
-    abort_timeout = max(num_msgs/10000, 10) #seconds
-    abort_start = time.perf_counter()
-
     msg_count = 0
     msg = PyRTMA.CMessage()
     while msg_count < num_msgs:
@@ -100,7 +101,6 @@ def subscriber_loop(sub_id, num_msgs, msg_size=512, server='127.0.0.1:7111'):
             msg_type = msg.GetHeader().msg_type
             if msg_type == MT_TEST_MSG:
                 if msg_count == 0:
-
                     tic = time.perf_counter()
                 toc = time.perf_counter()
                 msg_count += 1
@@ -108,15 +108,13 @@ def subscriber_loop(sub_id, num_msgs, msg_size=512, server='127.0.0.1:7111'):
                 print('Got EXIT')
                 break
 
-        if time.perf_counter() - abort_start > abort_timeout: 
-            print(f"Subscriber [{sub_id:d}] Timed out.")
-            break
+    mod.SendSignal(MT_SUBSCRIBER_DONE)
 
     # Stats
     msg_data = create_test_msg(msg_size)()
     test_msg_size = HEADER_SIZE + ctypes.sizeof(msg_data)
     dur = toc - tic
-    data_rate = (test_msg_size * num_msgs) / float(1048576) / dur
+    data_rate = (test_msg_size * num_msgs) / 1e6 / dur
     if msg_count == num_msgs:
         print(f"Subscriber [{sub_id:d}] -> {msg_count} messages | {int((msg_count-1)/dur)} messages/sec | {data_rate:0.1f} MB/sec | {dur:0.6f} sec ")
     else:
@@ -139,12 +137,20 @@ if __name__ == '__main__':
     #Main Thread RTMA client
     mod = PyRTMA.RTMA_Module(0, 0)
     mod.ConnectToMMM(args.server)
+    mod.SendModuleReady()
+    mod.Subscribe(MT_PUBLISHER_READY)
+    mod.Subscribe(MT_PUBLISHER_DONE)
+    mod.Subscribe(MT_SUBSCRIBER_READY)
+    mod.Subscribe(MT_SUBSCRIBER_DONE)
+    
+    sys.stdout.write(f"Packet size: {args.msg_size} bytes\n")
+    sys.stdout.write(f"Sending {args.num_msgs} messages...\n")
+    sys.stdout.flush()
 
-    print("Initializing publisher processses...")
-    publisher_ready = []
+    #print("Initializing publisher processses...")
     publishers = []
     for n in range(args.num_publishers):
-        publisher_ready.append(multiprocessing.Event())
+        #publisher_ready.append(multiprocessing.Event())
         publishers.append(
                 multiprocessing.Process(
                     target=publisher_loop,
@@ -153,53 +159,62 @@ if __name__ == '__main__':
                         'num_msgs': int(args.num_msgs/args.num_publishers),
                         'msg_size': args.msg_size, 
                         'num_subscribers': args.num_subscribers,
-                        'ready_flag': publisher_ready[n],
                         'server': args.server})
                     )
         publishers[n].start()
 
     # Wait for publisher processes to be established
-    for flag in publisher_ready:
-        flag.wait()
+    publishers_ready = 0
+    msg = PyRTMA.CMessage()
+    while publishers_ready < args.num_publishers:
+        rcv = mod.ReadMessage(msg, timeout=-1)
+        if rcv == 1:
+            msg_type = msg.GetHeader().msg_type
+            if msg_type == MT_PUBLISHER_READY:
+                publishers_ready += 1
 
-    print('Waiting for subscriber processes...')
+    #print('Waiting for subscriber processes...')
     subscribers = []
     for n in range(args.num_subscribers):
         subscribers.append(
                 multiprocessing.Process(
                     target=subscriber_loop,
-                    args=(n+1, args.num_msgs, args.msg_size),
-                    kwargs={'server':args.server}))
+                    kwargs={
+                        'sub_id': n+1,
+                        'num_msgs': args.num_msgs,
+                        'msg_size': args.msg_size, 
+                        'server': args.server})
+                    )
         subscribers[n].start()
 
-    print("Starting Test...")
-    print(f"RTMA packet size: {HEADER_SIZE + args.msg_size}")
-    print(f'Sending {args.num_msgs} messages...')
+    #print("Starting Test...")
+    #print(f"RTMA packet size: {HEADER_SIZE + args.msg_size}")
+    #print(f'Sending {args.num_msgs} messages...')
 
-    # Wait for publishers to finish
+    # Wait for subscribers to finish
+    abort_timeout = 120 #seconds
+    abort_start = time.perf_counter()
+
+    subscribers_done = 0
+    publishers_done = 0
+    while (subscribers_done < args.num_subscribers) or (publishers_done < args.num_publishers):
+        rcv = mod.ReadMessage(msg, timeout=-1)
+        if rcv == 1:
+            msg_type = msg.GetHeader().msg_type
+            if msg_type == MT_SUBSCRIBER_DONE:
+                subscribers_done += 1
+            if msg_type == MT_PUBLISHER_DONE:
+                publishers_done += 1
+
+        if (time.perf_counter() - abort_start) > abort_timeout: 
+            mod.SendSignal(PyRTMA.MT_EXIT)
+            sys.stdout.write('Test Timeout! Sending Exit Signal...\n')
+            sys.stdout.flush()
+
     for publisher in publishers:
         publisher.join()
 
-    # Wait for subscribers to finish
-    abort_timeout = max(args.num_msgs/10000, 10) #seconds
-    abort_start = time.perf_counter()
-    abort = False
-
-    while not abort:
-        subscribers_finished = 0
-        for subscriber in subscribers:
-            if subscriber.exitcode is not None:
-                subscribers_finished += 1
-
-        if subscribers_finished == len(subscribers):
-            break
-
-        if time.perf_counter() - abort_start > abort_timeout: 
-            mod.SendSignal(PyRTMA.MT_EXIT)
-            print('Test Timeout! Sending Exit Signal...')
-            abort = True
-
     for subscriber in subscribers:
         subscriber.join()
-    
-    print('Done!')
+
+    #print('Done!')
